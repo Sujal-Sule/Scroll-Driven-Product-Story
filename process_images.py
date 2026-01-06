@@ -9,7 +9,7 @@ if not os.path.exists(OS_DEST_DIR):
     os.makedirs(OS_DEST_DIR)
 
 # Get files and sort them to ensure correct order
-files = sorted([f for f in os.listdir(SOURCE_DIR) if f.startswith("ezgif-frame-") and f.endswith(".webp")])
+files = sorted([f for f in os.listdir(SOURCE_DIR) if f.startswith("ezgif-frame-") and f.endswith(".jpg")])
 
 print(f"Found {len(files)} files in {SOURCE_DIR}")
 
