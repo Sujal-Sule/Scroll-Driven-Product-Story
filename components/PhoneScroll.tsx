@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useScroll, useMotionValueEvent, useTransform, motion } from "framer-motion";
 
-const FRAME_COUNT = 80;
+const FRAME_COUNT = 192;
 
 interface PhoneScrollProps {
     immersive: boolean;
@@ -15,6 +15,32 @@ export default function PhoneScroll({ immersive, onReset }: PhoneScrollProps) {
     const [images, setImages] = useState<HTMLImageElement[]>([]);
     const [imagesLoaded, setImagesLoaded] = useState(false);
     const { scrollYProgress } = useScroll();
+
+    // Bounds state
+    const [imgBounds, setImgBounds] = useState({ x: 0, y: 0, w: 0, h: 0 });
+
+    // Helper to Calculate Bounds (Only calls state if changed significantly)
+    const updateBounds = (canvas: HTMLCanvasElement, img: HTMLImageElement) => {
+        const canvasWidth = canvas.width;
+        const canvasHeight = canvas.height;
+        const imgWidth = img.width;
+        const imgHeight = img.height;
+
+        const scale = Math.min(canvasWidth / imgWidth, canvasHeight / imgHeight);
+        const x = (canvasWidth / 2) - (imgWidth / 2) * scale;
+        const y = (canvasHeight / 2) - (imgHeight / 2) * scale;
+        const w = imgWidth * scale;
+        const h = imgHeight * scale;
+
+        setImgBounds(prev => {
+            if (Math.abs(x - prev.x) > 1 || Math.abs(w - prev.w) > 1) {
+                return { x, y, w, h };
+            }
+            return prev;
+        });
+
+        return { x, y, w, h, scale };
+    };
 
     // Preload images
     useEffect(() => {
@@ -38,8 +64,6 @@ export default function PhoneScroll({ immersive, onReset }: PhoneScrollProps) {
     }, []);
 
 
-    const [imgBounds, setImgBounds] = useState({ x: 0, y: 0, w: 0, h: 0 });
-
     // Draw frame based on scroll
     const renderFrame = (index: number) => {
         const canvas = canvasRef.current;
@@ -59,16 +83,20 @@ export default function PhoneScroll({ immersive, onReset }: PhoneScrollProps) {
         const x = (canvasWidth / 2) - (imgWidth / 2) * scale;
         const y = (canvasHeight / 2) - (imgHeight / 2) * scale;
 
-        // Update bounds for overlays if changed significantly
-        // (Debouncing could be good but for now direct update)
-        // Check if bounds changed to avoid re-renders if possible, or just accept it
-        if (Math.abs(x - imgBounds.x) > 1 || Math.abs(scale * imgWidth - imgBounds.w) > 1) {
-            setImgBounds({ x, y, w: imgWidth * scale, h: imgHeight * scale });
-        }
+        // NOTE: We do NOT update React state here anymore to avoid lag
+        // Bounds are handled by the resize listener or initial load
 
         ctx.clearRect(0, 0, canvasWidth, canvasHeight);
         ctx.drawImage(img, x, y, imgWidth * scale, imgHeight * scale);
     };
+
+    // Initial Bounds Calculation (Once images load)
+    useEffect(() => {
+        if (imagesLoaded && images.length > 0 && canvasRef.current) {
+            updateBounds(canvasRef.current, images[0]);
+            renderFrame(0);
+        }
+    }, [imagesLoaded, images]);
 
     // Scroll Logic with Reassembly (0 -> 0.85 -> 1.0)
     useMotionValueEvent(scrollYProgress, "change", (latest) => {
@@ -97,28 +125,35 @@ export default function PhoneScroll({ immersive, onReset }: PhoneScrollProps) {
         }
     }, [immersive, imagesLoaded]);
 
-    // Initial draw
-    useEffect(() => {
-        if (imagesLoaded) {
-            renderFrame(0);
-        }
-    }, [imagesLoaded]);
-
     // Handle Resize
     useEffect(() => {
         const handleResize = () => {
-            if (canvasRef.current) {
+            if (canvasRef.current && images.length > 0) {
                 canvasRef.current.width = window.innerWidth;
                 canvasRef.current.height = window.innerHeight;
-                // Trigger redraw naturally via existing logic or forced
-                if (imagesLoaded) renderFrame(Math.floor(scrollYProgress.get() * (FRAME_COUNT - 1)));
+
+                // Recalculate bounds on resize
+                updateBounds(canvasRef.current, images[0]);
+
+                // Redraw current frame
+                if (imagesLoaded) {
+                    const latest = scrollYProgress.get();
+                    let frameIndex = 0;
+                    if (latest <= 0.85) {
+                        frameIndex = Math.floor((latest / 0.85) * (FRAME_COUNT - 1));
+                    } else {
+                        const reassemblyProgress = (latest - 0.85) / 0.15;
+                        frameIndex = Math.floor((1 - reassemblyProgress) * (FRAME_COUNT - 1));
+                    }
+                    renderFrame(frameIndex);
+                }
             }
         };
 
         handleResize();
         window.addEventListener("resize", handleResize);
         return () => window.removeEventListener("resize", handleResize);
-    }, [imagesLoaded]);
+    }, [imagesLoaded, images]);
 
     // Effect Opacity Transforms
     // Camera: 25-40%
